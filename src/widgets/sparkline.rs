@@ -8,9 +8,9 @@ use symbols::bar;
 
 pub struct Sparkline<'a> {
     block: Option<Block<'a>>,
-    color: Color,
-    background_color: Color,
-    data: &'a [u64],
+    fg: Color,
+    bg: Color,
+    data: Vec<u64>,
     max: Option<u64>,
 }
 
@@ -18,9 +18,9 @@ impl<'a> Default for Sparkline<'a> {
     fn default() -> Sparkline<'a> {
         Sparkline {
             block: None,
-            color: Color::Reset,
-            background_color: Color::Reset,
-            data: &[],
+            fg: Color::Reset,
+            bg: Color::Reset,
+            data: Vec::new(),
             max: None,
         }
     }
@@ -32,19 +32,19 @@ impl<'a> Sparkline<'a> {
         self
     }
 
-    pub fn color(&mut self, color: Color) -> &mut Sparkline<'a> {
-        self.color = color;
+    pub fn fg(&mut self, fg: Color) -> &mut Sparkline<'a> {
+        self.fg = fg;
         self
     }
 
-    pub fn background_color(&mut self, color: Color) -> &mut Sparkline<'a> {
-        self.background_color = color;
+    pub fn bg(&mut self, bg: Color) -> &mut Sparkline<'a> {
+        self.bg = bg;
         self
     }
 
 
-    pub fn data(&mut self, data: &'a [u64]) -> &mut Sparkline<'a> {
-        self.data = data;
+    pub fn data(&mut self, data: &[u64]) -> &mut Sparkline<'a> {
+        self.data = data.to_vec();
         self
     }
 
@@ -54,18 +54,17 @@ impl<'a> Sparkline<'a> {
     }
 }
 
-impl<'a> Widget for Sparkline<'a> {
-    fn buffer(&self, area: &Rect, buf: &mut Buffer) {
-        let spark_area = match self.block {
-            Some(ref b) => {
-                b.buffer(area, buf);
-                b.inner(area)
-            }
-            None => *area,
+impl<'a> Widget<'a> for Sparkline<'a> {
+    fn buffer(&'a self, area: &Rect) -> Buffer<'a> {
+        let (mut buf, spark_area) = match self.block {
+            Some(ref b) => (b.buffer(area), b.inner(*area)),
+            None => (Buffer::empty(*area), *area),
         };
         if spark_area.height < 1 {
-            return;
+            return buf;
         } else {
+            let margin_x = spark_area.x - area.x;
+            let margin_y = spark_area.y - area.y;
             let max = match self.max {
                 Some(v) => v,
                 None => *self.data.iter().max().unwrap_or(&1u64),
@@ -89,11 +88,7 @@ impl<'a> Widget for Sparkline<'a> {
                         7 => bar::SEVEN_EIGHTHS,
                         _ => bar::FULL,
                     };
-                    buf.update_cell(spark_area.left() + i as u16,
-                                    spark_area.top() + j,
-                                    symbol,
-                                    self.color,
-                                    self.background_color);
+                    buf.update_cell(margin_x + i as u16, margin_y + j, symbol, self.fg, self.bg);
 
                     if *d > 8 {
                         *d -= 8;
@@ -103,5 +98,6 @@ impl<'a> Widget for Sparkline<'a> {
                 }
             }
         }
+        buf
     }
 }
