@@ -1,4 +1,4 @@
-use std::cmp::{max, min};
+use unicode_width::UnicodeWidthStr;
 
 use widgets::{Widget, Block};
 use buffer::Buffer;
@@ -22,9 +22,8 @@ use layout::Rect;
 pub struct Gauge<'a> {
     block: Option<Block<'a>>,
     percent: u16,
-    percent_string: String,
-    fg: Color,
-    bg: Color,
+    color: Color,
+    background_color: Color,
 }
 
 impl<'a> Default for Gauge<'a> {
@@ -32,9 +31,8 @@ impl<'a> Default for Gauge<'a> {
         Gauge {
             block: None,
             percent: 0,
-            percent_string: String::from("0%"),
-            bg: Color::Reset,
-            fg: Color::Reset,
+            color: Color::Reset,
+            background_color: Color::Reset,
         }
     }
 }
@@ -47,46 +45,53 @@ impl<'a> Gauge<'a> {
 
     pub fn percent(&mut self, percent: u16) -> &mut Gauge<'a> {
         self.percent = percent;
-        self.percent_string = format!("{}%", percent);
         self
     }
 
-    pub fn bg(&mut self, bg: Color) -> &mut Gauge<'a> {
-        self.bg = bg;
+    pub fn color(&mut self, color: Color) -> &mut Gauge<'a> {
+        self.color = color;
         self
     }
 
-    pub fn fg(&mut self, fg: Color) -> &mut Gauge<'a> {
-        self.fg = fg;
+    pub fn background_color(&mut self, color: Color) -> &mut Gauge<'a> {
+        self.background_color = color;
         self
     }
 }
 
-impl<'a> Widget<'a> for Gauge<'a> {
-    fn buffer(&'a self, area: &Rect) -> Buffer<'a> {
-        let (mut buf, gauge_area) = match self.block {
-            Some(ref b) => (b.buffer(area), b.inner(*area)),
-            None => (Buffer::empty(*area), *area),
+impl<'a> Widget for Gauge<'a> {
+    fn buffer(&self, area: &Rect, buf: &mut Buffer) {
+        let gauge_area = match self.block {
+            Some(ref b) => {
+                b.buffer(area, buf);
+                b.inner(area)
+            }
+            None => *area,
         };
         if gauge_area.height < 1 {
-            return buf;
+            return;
         } else {
-            let margin_x = gauge_area.x - area.x;
-            let margin_y = gauge_area.y - area.y;
             // Gauge
             let width = (gauge_area.width * self.percent) / 100;
-            for i in 0..width {
-                buf.update_cell(margin_x + i, margin_y, " ", self.fg, self.bg);
+            let end = gauge_area.left() + width;
+
+            for x in gauge_area.left()..end {
+                buf.set_symbol(x, gauge_area.top(), " ");
             }
+
             // Label
-            let len = self.percent_string.len() as u16;
-            let middle = gauge_area.width / 2 - len / 2;
-            buf.set_string(middle, margin_y, &self.percent_string, self.bg, self.fg);
-            let bound = max(middle, min(middle + len, width));
-            for i in middle..bound {
-                buf.update_colors(margin_x + i, margin_y, self.fg, self.bg);
+            let label = format!("{}%", self.percent);
+            let label_width = label.width() as u16;
+            let middle = (gauge_area.width - label_width) / 2 + gauge_area.left();
+            buf.set_string(middle,
+                           gauge_area.top(),
+                           &label,
+                           self.color,
+                           self.background_color);
+
+            for x in gauge_area.left()..end {
+                buf.update_colors(x, gauge_area.top(), self.background_color, self.color);
             }
         }
-        buf
     }
 }

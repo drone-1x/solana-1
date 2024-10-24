@@ -12,8 +12,8 @@ pub struct List<'a> {
     selected: usize,
     selection_symbol: Option<&'a str>,
     selection_color: Color,
-    text_color: Color,
-    bg: Color,
+    color: Color,
+    background_color: Color,
     items: &'a [&'a str],
 }
 
@@ -24,8 +24,8 @@ impl<'a> Default for List<'a> {
             selected: 0,
             selection_symbol: None,
             selection_color: Color::Reset,
-            text_color: Color::Reset,
-            bg: Color::Reset,
+            color: Color::Reset,
+            background_color: Color::Reset,
             items: &[],
         }
     }
@@ -42,13 +42,13 @@ impl<'a> List<'a> {
         self
     }
 
-    pub fn text_color(&'a mut self, text_color: Color) -> &mut List<'a> {
-        self.text_color = text_color;
+    pub fn color(&'a mut self, color: Color) -> &mut List<'a> {
+        self.color = color;
         self
     }
 
-    pub fn bg(&'a mut self, bg: Color) -> &mut List<'a> {
-        self.bg = bg;
+    pub fn background_color(&'a mut self, color: Color) -> &mut List<'a> {
+        self.background_color = color;
         self
     }
 
@@ -68,11 +68,15 @@ impl<'a> List<'a> {
     }
 }
 
-impl<'a> Widget<'a> for List<'a> {
-    fn buffer(&'a self, area: &Rect) -> Buffer<'a> {
-        let (mut buf, list_area) = match self.block {
-            Some(ref b) => (b.buffer(area), b.inner(*area)),
-            None => (Buffer::empty(*area), *area),
+impl<'a> Widget for List<'a> {
+    fn buffer(&self, area: &Rect, buf: &mut Buffer) {
+
+        let list_area = match self.block {
+            Some(ref b) => {
+                b.buffer(area, buf);
+                b.inner(area)
+            }
+            None => *area,
         };
 
         let list_length = self.items.len();
@@ -84,8 +88,8 @@ impl<'a> Widget<'a> for List<'a> {
             0
         };
         let x = match self.selection_symbol {
-            Some(s) => (s.width() + 2) as u16,
-            None => 1,
+            Some(s) => (s.width() + 1) as u16 + list_area.left(),
+            None => list_area.left(),
         };
         for i in 0..bound {
             let index = i + offset;
@@ -93,17 +97,20 @@ impl<'a> Widget<'a> for List<'a> {
             let color = if index == self.selected {
                 self.selection_color
             } else {
-                self.text_color
+                self.color
             };
-            buf.set_string(x, 1 + i as u16, item, color, self.bg);
+            buf.set_string(x,
+                           list_area.top() + i as u16,
+                           item,
+                           color,
+                           self.background_color);
         }
         if let Some(s) = self.selection_symbol {
-            buf.set_string(1,
-                           (1 + self.selected - offset) as u16,
+            buf.set_string(list_area.left(),
+                           list_area.top() + (self.selected - offset) as u16,
                            s,
                            self.selection_color,
-                           self.bg);
+                           self.background_color);
         }
-        buf
     }
 }

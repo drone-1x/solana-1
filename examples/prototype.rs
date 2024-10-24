@@ -21,8 +21,9 @@ use log4rs::encode::pattern::PatternEncoder;
 use log4rs::config::{Appender, Config, Root};
 
 use tui::Terminal;
-use tui::widgets::{Widget, Block, List, Gauge, Sparkline, Text, border, Chart, Axis, Dataset};
-use tui::layout::{Group, Direction, Alignment, Size};
+use tui::widgets::{Widget, Block, List, Gauge, Sparkline, Text, border, Chart, Axis, Dataset,
+                   BarChart};
+use tui::layout::{Group, Direction, Size, Rect};
 use tui::style::Color;
 
 #[derive(Clone)]
@@ -73,7 +74,7 @@ impl Iterator for SinSignal {
 }
 
 struct App<'a> {
-    name: String,
+    size: Rect,
     items: Vec<&'a str>,
     items2: Vec<&'a str>,
     selected: usize,
@@ -82,6 +83,7 @@ struct App<'a> {
     data: Vec<u64>,
     data2: Vec<(f64, f64)>,
     data3: Vec<(f64, f64)>,
+    data4: Vec<(&'a str, u64)>,
     window: [f64; 2],
     colors: [Color; 2],
     color_index: usize,
@@ -112,18 +114,33 @@ fn main() {
     let mut sin_signal2 = SinSignal::new(2.0, 10.0);
 
     let mut app = App {
-        name: String::from("Test app"),
+        size: Rect::default(),
         items: vec!["Item1", "Item2", "Item3", "Item4", "Item5", "Item6", "Item7", "Item8",
                     "Item9", "Item10"],
         items2: vec!["Event1", "Event2", "Event3", "Event4", "Event5", "Event6", "Event7",
                      "Event8", "Event9", "Event10", "Event11", "Event12", "Event13", "Event14",
-                     "Event15", "Event16", "Event17"],
+                     "Event15", "Event16", "Event17", "Event18", "Event19"],
         selected: 0,
         show_chart: true,
         progress: 0,
         data: rand_signal.clone().take(200).collect(),
         data2: sin_signal.clone().take(20).collect(),
         data3: sin_signal2.clone().take(20).collect(),
+        data4: vec![("B1", 9),
+                    ("B2", 12),
+                    ("B3", 5),
+                    ("B4", 8),
+                    ("B5", 2),
+                    ("B6", 4),
+                    ("B7", 5),
+                    ("B8", 9),
+                    ("B9", 14),
+                    ("B10", 15),
+                    ("B11", 1),
+                    ("B12", 0),
+                    ("B13", 4),
+                    ("B14", 6),
+                    ("B15", 4)],
         window: [0.0, 20.0],
         colors: [Color::Magenta, Color::Red],
         color_index: 0,
@@ -131,7 +148,7 @@ fn main() {
     let (tx, rx) = mpsc::channel();
     let input_tx = tx.clone();
 
-    for i in 0..20 {
+    for _ in 0..20 {
         sin_signal.next();
         sin_signal2.next();
     }
@@ -151,7 +168,7 @@ fn main() {
         let tx = tx.clone();
         loop {
             tx.send(Event::Tick).unwrap();
-            thread::sleep(time::Duration::from_millis(200));
+            thread::sleep(time::Duration::from_millis(1000));
         }
     });
 
@@ -160,7 +177,11 @@ fn main() {
     terminal.hide_cursor();
 
     loop {
-        terminal.clear();
+        let size = Terminal::size().unwrap();
+        if size != app.size {
+            terminal.resize(size);
+            app.size = size;
+        }
         draw(&mut terminal, &app);
         let evt = rx.recv().unwrap();
         match evt {
@@ -196,12 +217,10 @@ fn main() {
                 app.data2.push(sin_signal.next().unwrap());
                 app.data3.remove(0);
                 app.data3.push(sin_signal2.next().unwrap());
+                let i = app.data4.pop().unwrap();
+                app.data4.insert(0, i);
                 app.window[0] += 1.0;
                 app.window[1] += 1.0;
-                app.selected += 1;
-                if app.selected >= app.items.len() {
-                    app.selected = 0;
-                }
                 let i = app.items2.pop().unwrap();
                 app.items2.insert(0, i);
                 app.color_index += 1;
@@ -216,61 +235,66 @@ fn main() {
 
 fn draw(t: &mut Terminal, app: &App) {
 
-    let size = Terminal::size().unwrap();
 
     Group::default()
         .direction(Direction::Vertical)
-        .alignment(Alignment::Left)
-        .chunks(&[Size::Fixed(7), Size::Min(5), Size::Fixed(5)])
-        .render(t, &size, |t, chunks| {
+        .sizes(&[Size::Fixed(7), Size::Min(7), Size::Fixed(7)])
+        .render(t, &app.size, |t, chunks| {
             Block::default().borders(border::ALL).title("Graphs").render(&chunks[0], t);
             Group::default()
                 .direction(Direction::Vertical)
-                .alignment(Alignment::Left)
                 .margin(1)
-                .chunks(&[Size::Fixed(2), Size::Fixed(3)])
+                .sizes(&[Size::Fixed(2), Size::Fixed(3)])
                 .render(t, &chunks[0], |t, chunks| {
                     Gauge::default()
                         .block(Block::default().title("Gauge:"))
-                        .bg(Color::Magenta)
+                        .color(Color::Magenta)
                         .percent(app.progress)
                         .render(&chunks[0], t);
                     Sparkline::default()
                         .block(Block::default().title("Sparkline:"))
-                        .fg(Color::Green)
+                        .color(Color::Green)
                         .data(&app.data)
                         .render(&chunks[1], t);
                 });
             let sizes = if app.show_chart {
-                vec![Size::Max(40), Size::Min(20)]
+                vec![Size::Percent(50), Size::Percent(50)]
             } else {
-                vec![Size::Max(40)]
+                vec![Size::Percent(100)]
             };
             Group::default()
                 .direction(Direction::Horizontal)
-                .alignment(Alignment::Left)
-                .chunks(&sizes)
+                .sizes(&sizes)
                 .render(t, &chunks[1], |t, chunks| {
                     Group::default()
                         .direction(Direction::Vertical)
-                        .chunks(&[Size::Min(20), Size::Max(40)])
+                        .sizes(&[Size::Percent(50), Size::Percent(50)])
                         .render(t, &chunks[0], |t, chunks| {
                             Group::default()
                                 .direction(Direction::Horizontal)
-                                .chunks(&[Size::Max(20), Size::Min(0)])
+                                .sizes(&[Size::Percent(50), Size::Percent(50)])
                                 .render(t, &chunks[0], |t, chunks| {
                                     List::default()
                                         .block(Block::default().borders(border::ALL).title("List"))
                                         .items(&app.items)
                                         .select(app.selected)
-                                        .selection_color(Color::LightYellow)
+                                        .selection_color(Color::Yellow)
                                         .selection_symbol(">")
                                         .render(&chunks[0], t);
                                     List::default()
                                         .block(Block::default().borders(border::ALL).title("List"))
                                         .items(&app.items2)
                                         .render(&chunks[1], t);
-                                })
+                                });
+                            BarChart::default()
+                                .block(Block::default().borders(border::ALL).title("Bar chart"))
+                                .data(&app.data4)
+                                .bar_width(3)
+                                .bar_gap(2)
+                                .bar_color(Color::Green)
+                                .value_color(Color::Black)
+                                .label_color(Color::Yellow)
+                                .render(&chunks[1], t);
                         });
                     if app.show_chart {
                         Chart::default()
@@ -294,8 +318,15 @@ fn draw(t: &mut Terminal, app: &App) {
                 });
             Text::default()
                 .block(Block::default().borders(border::ALL).title("Footer"))
+                .wrap(true)
                 .fg(app.colors[app.color_index])
-                .text("日本国 UTF-8 charaters")
+                .text("This a paragraph with several lines.\nYou can change the color.\nUse \
+                       \\{[color] [text]} to highlight the text with the color. For example, \
+                       {red u}{green n}{yellow d}{magenta e}{cyan r} {gray t}{light_gray \
+                       h}{light_red e} {light_green r}{light_yellow a}{light_magenta \
+                       i}{light_cyan n}{white b}{red o}{green w}.\nOh, and if you didn't notice \
+                       you can automatically wrap your text =).")
                 .render(&chunks[2], t);
         });
+    t.finish();
 }

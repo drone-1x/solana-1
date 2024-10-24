@@ -4,6 +4,7 @@ mod list;
 mod gauge;
 mod sparkline;
 mod chart;
+mod barchart;
 
 pub use self::block::Block;
 pub use self::text::Text;
@@ -11,6 +12,7 @@ pub use self::list::List;
 pub use self::gauge::Gauge;
 pub use self::sparkline::Sparkline;
 pub use self::chart::{Chart, Axis, Dataset};
+pub use self::barchart::BarChart;
 
 use buffer::Buffer;
 use layout::Rect;
@@ -29,9 +31,11 @@ pub mod border {
     }
 }
 
-pub trait Widget<'a> {
-    fn buffer(&'a self, area: &Rect) -> Buffer<'a>;
-    fn render(&'a self, area: &Rect, t: &mut Terminal) {
-        t.render_buffer(self.buffer(area));
+pub trait Widget {
+    fn buffer(&self, area: &Rect, buf: &mut Buffer);
+    fn render(&self, area: &Rect, t: &mut Terminal)
+        where Self: Sized
+    {
+        t.render(self, area);
     }
 }
