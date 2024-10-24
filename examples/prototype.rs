@@ -10,27 +10,83 @@ use std::time;
 use std::sync::mpsc;
 use std::io::stdin;
 
+use rand::distributions::{IndependentSample, Range};
+
 use termion::event;
 use termion::input::TermRead;
 
 use log::LogLevelFilter;
 use log4rs::append::file::FileAppender;
 use log4rs::encode::pattern::PatternEncoder;
-use log4rs::config::{Appender, Config, Logger, Root};
+use log4rs::config::{Appender, Config, Root};
 
 use tui::Terminal;
-use tui::widgets::{Widget, Block, List, Gauge, Sparkline, border};
+use tui::widgets::{Widget, Block, List, Gauge, Sparkline, Text, border, Chart, Axis, Dataset,
+                   BarChart};
 use tui::layout::{Group, Direction, Alignment, Size};
 use tui::style::Color;
 
-struct App {
+#[derive(Clone)]
+struct RandomSignal {
+    range: Range<u64>,
+    rng: rand::ThreadRng,
+}
+
+impl RandomSignal {
+    fn new(r: Range<u64>) -> RandomSignal {
+        RandomSignal {
+            range: r,
+            rng: rand::thread_rng(),
+        }
+    }
+}
+
+impl Iterator for RandomSignal {
+    type Item = u64;
+    fn next(&mut self) -> Option<u64> {
+        Some(self.range.ind_sample(&mut self.rng))
+    }
+}
+
+#[derive(Clone)]
+struct SinSignal {
+    x: f64,
+    period: f64,
+    scale: f64,
+}
+
+impl SinSignal {
+    fn new(period: f64, scale: f64) -> SinSignal {
+        SinSignal {
+            x: 0.0,
+            period: period,
+            scale: scale,
+        }
+    }
+}
+
+impl Iterator for SinSignal {
+    type Item = (f64, f64);
+    fn next(&mut self) -> Option<(f64, f64)> {
+        self.x += 1.0;
+        Some((self.x, ((self.x * 1.0 / self.period).sin() + 1.0) * self.scale))
+    }
+}
+
+struct App<'a> {
     name: String,
-    fetching: bool,
-    items: Vec<String>,
+    items: Vec<&'a str>,
+    items2: Vec<&'a str>,
     selected: usize,
-    show_episodes: bool,
+    show_chart: bool,
     progress: u16,
     data: Vec<u64>,
+    data2: Vec<(f64, f64)>,
+    data3: Vec<(f64, f64)>,
+    data4: Vec<(&'a str, u64)>,
+    window: [f64; 2],
+    colors: [Color; 2],
+    color_index: usize,
 }
 
 enum Event {
@@ -50,20 +106,49 @@ fn main() {
         .build(Root::builder().appender("log").build(LogLevelFilter::Debug))
         .unwrap();
 
-    let handle = log4rs::init_config(config).unwrap();
+    log4rs::init_config(config).unwrap();
     info!("Start");
+
+    let mut rand_signal = RandomSignal::new(Range::new(0, 100));
+    let mut sin_signal = SinSignal::new(4.0, 20.0);
+    let mut sin_signal2 = SinSignal::new(2.0, 10.0);
 
     let mut app = App {
         name: String::from("Test app"),
-        fetching: false,
-        items: ["1", "2", "3"].into_iter().map(|e| String::from(*e)).collect(),
+        items: vec!["Item1", "Item2", "Item3", "Item4", "Item5", "Item6", "Item7", "Item8",
+                    "Item9", "Item10"],
+        items2: vec!["Event1", "Event2", "Event3", "Event4", "Event5", "Event6", "Event7",
+                     "Event8", "Event9", "Event10", "Event11", "Event12", "Event13", "Event14",
+                     "Event15", "Event16", "Event17"],
         selected: 0,
-        show_episodes: false,
+        show_chart: true,
         progress: 0,
-        data: (0..100).map(|_| rand::random::<u8>() as u64).collect(),
+        data: rand_signal.clone().take(200).collect(),
+        data2: sin_signal.clone().take(20).collect(),
+        data3: sin_signal2.clone().take(20).collect(),
+        data4: vec![("B1", 9),
+                    ("B2", 12),
+                    ("B3", 5),
+                    ("B4", 8),
+                    ("B5", 2),
+                    ("B6", 4),
+                    ("B7", 5),
+                    ("B8", 9),
+                    ("B9", 14),
+                    ("B10", 15),
+                    ("B11", 1),
+                    ("B12", 0)],
+        window: [0.0, 20.0],
+        colors: [Color::Magenta, Color::Red],
+        color_index: 0,
     };
     let (tx, rx) = mpsc::channel();
     let input_tx = tx.clone();
+
+    for i in 0..20 {
+        sin_signal.next();
+        sin_signal2.next();
+    }
 
     thread::spawn(move || {
         let stdin = stdin();
@@ -80,7 +165,7 @@ fn main() {
         let tx = tx.clone();
         loop {
             tx.send(Event::Tick).unwrap();
-            thread::sleep(time::Duration::from_millis(1000));
+            thread::sleep(time::Duration::from_millis(500));
         }
     });
 
@@ -89,6 +174,7 @@ fn main() {
     terminal.hide_cursor();
 
     loop {
+        terminal.clear();
         draw(&mut terminal, &app);
         let evt = rx.recv().unwrap();
         match evt {
@@ -108,7 +194,7 @@ fn main() {
                         }
                     }
                     event::Key::Char('t') => {
-                        app.show_episodes = !app.show_episodes;
+                        app.show_chart = !app.show_chart;
                     }
                     _ => {}
                 }
@@ -118,65 +204,123 @@ fn main() {
                 if app.progress > 100 {
                     app.progress = 0;
                 }
-                app.data.insert(0, rand::random::<u8>() as u64);
+                app.data.insert(0, rand_signal.next().unwrap());
                 app.data.pop();
+                app.data2.remove(0);
+                app.data2.push(sin_signal.next().unwrap());
+                app.data3.remove(0);
+                app.data3.push(sin_signal2.next().unwrap());
+                let i = app.data4.pop().unwrap();
+                app.data4.insert(0, i);
+                app.window[0] += 1.0;
+                app.window[1] += 1.0;
+                app.selected += 1;
+                if app.selected >= app.items.len() {
+                    app.selected = 0;
+                }
+                let i = app.items2.pop().unwrap();
+                app.items2.insert(0, i);
+                app.color_index += 1;
+                if app.color_index >= app.colors.len() {
+                    app.color_index = 0;
+                }
             }
         }
     }
     terminal.show_cursor();
 }
 
-fn draw(terminal: &mut Terminal, app: &App) {
+fn draw(t: &mut Terminal, app: &App) {
 
-    let ui = Group::default()
+    let size = Terminal::size().unwrap();
+
+    Group::default()
         .direction(Direction::Vertical)
         .alignment(Alignment::Left)
-        .chunks(&[Size::Fixed(7), Size::Min(5), Size::Fixed(3)])
-        .render(&terminal.area(), |chunks, tree| {
-            tree.add(Block::default().borders(border::ALL).title("Graphs").render(&chunks[0]));
-            tree.add(Group::default()
+        .chunks(&[Size::Fixed(7), Size::Min(5), Size::Fixed(5)])
+        .render(t, &size, |t, chunks| {
+            Block::default().borders(border::ALL).title("Graphs").render(&chunks[0], t);
+            Group::default()
                 .direction(Direction::Vertical)
                 .alignment(Alignment::Left)
                 .margin(1)
                 .chunks(&[Size::Fixed(2), Size::Fixed(3)])
-                .render(&chunks[0], |chunks, tree| {
-                    tree.add(Gauge::new()
-                        .block(*Block::default().title("Gauge:"))
-                        .bg(Color::Yellow)
+                .render(t, &chunks[0], |t, chunks| {
+                    Gauge::default()
+                        .block(Block::default().title("Gauge:"))
+                        .bg(Color::Magenta)
                         .percent(app.progress)
-                        .render(&chunks[0]));
-                    tree.add(Sparkline::new()
-                        .block(*Block::default().title("Sparkline:"))
+                        .render(&chunks[0], t);
+                    Sparkline::default()
+                        .block(Block::default().title("Sparkline:"))
+                        .fg(Color::Green)
                         .data(&app.data)
-                        .render(&chunks[1]));
-                }));
-            let sizes = if app.show_episodes {
-                vec![Size::Min(20), Size::Max(40)]
+                        .render(&chunks[1], t);
+                });
+            let sizes = if app.show_chart {
+                vec![Size::Max(40), Size::Min(20)]
             } else {
-                vec![Size::Min(20)]
+                vec![Size::Max(40)]
             };
-            tree.add(Group::default()
+            Group::default()
                 .direction(Direction::Horizontal)
                 .alignment(Alignment::Left)
                 .chunks(&sizes)
-                .render(&chunks[1], |chunks, tree| {
-                    tree.add(List::default()
-                        .block(*Block::default().borders(border::ALL).title("Podcasts"))
-                        .items(&app.items)
-                        .select(app.selected)
-                        .formatter(|i, s| {
-                            let prefix = if s { ">" } else { "*" };
-                            format!("{} {}", prefix, i)
-                        })
-                        .render(&chunks[0]));
-                    if app.show_episodes {
-                        tree.add(Block::default()
-                            .borders(border::ALL)
-                            .title("Episodes")
-                            .render(&chunks[1]));
+                .render(t, &chunks[1], |t, chunks| {
+                    Group::default()
+                        .direction(Direction::Vertical)
+                        .chunks(&[Size::Min(20), Size::Max(40)])
+                        .render(t, &chunks[0], |t, chunks| {
+                            Group::default()
+                                .direction(Direction::Horizontal)
+                                .chunks(&[Size::Max(20), Size::Min(0)])
+                                .render(t, &chunks[0], |t, chunks| {
+                                    List::default()
+                                        .block(Block::default().borders(border::ALL).title("List"))
+                                        .items(&app.items)
+                                        .select(app.selected)
+                                        .selection_color(Color::LightYellow)
+                                        .selection_symbol(">")
+                                        .render(&chunks[0], t);
+                                    List::default()
+                                        .block(Block::default().borders(border::ALL).title("List"))
+                                        .items(&app.items2)
+                                        .render(&chunks[1], t);
+                                });
+                            BarChart::default()
+                                .block(Block::default().borders(border::ALL).title("Bar chart"))
+                                .data(&app.data4)
+                                .bar_width(3)
+                                .bar_gap(2)
+                                .bar_color(Color::LightGreen)
+                                .value_color(Color::Black)
+                                .label_color(Color::LightYellow)
+                                .render(&chunks[1], t);
+                        });
+                    if app.show_chart {
+                        Chart::default()
+                            .block(Block::default().title("Chart"))
+                            .x_axis(Axis::default()
+                                .title("X Axis")
+                                .color(Color::Gray)
+                                .bounds(app.window)
+                                .labels(&[&format!("{}", app.window[0]),
+                                          &format!("{}", (app.window[0] + app.window[1]) / 2.0),
+                                          &format!("{}", app.window[1])]))
+                            .y_axis(Axis::default()
+                                .title("Y Axis")
+                                .color(Color::Gray)
+                                .bounds([0.0, 40.0])
+                                .labels(&["0", "20", "40"]))
+                            .datasets(&[Dataset::default().color(Color::Cyan).data(&app.data2),
+                                        Dataset::default().color(Color::Yellow).data(&app.data3)])
+                            .render(&chunks[1], t);
                     }
-                }));
-            tree.add(Block::default().borders(border::ALL).title("Footer").render(&chunks[2]));
+                });
+            Text::default()
+                .block(Block::default().borders(border::ALL).title("Footer"))
+                .fg(app.colors[app.color_index])
+                .text("日本国 UTF-8 charaters")
+                .render(&chunks[2], t);
         });
-    terminal.render(ui);
 }

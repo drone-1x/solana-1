@@ -1,31 +1,36 @@
+use std::cmp::min;
+use std::usize;
+
+use unicode_segmentation::UnicodeSegmentation;
+
 use layout::Rect;
 use style::Color;
 
 #[derive(Debug, Clone)]
-pub struct Cell {
-    pub symbol: char,
+pub struct Cell<'a> {
+    pub symbol: &'a str,
     pub fg: Color,
     pub bg: Color,
 }
 
-impl Default for Cell {
-    fn default() -> Cell {
+impl<'a> Default for Cell<'a> {
+    fn default() -> Cell<'a> {
         Cell {
-            symbol: ' ',
-            fg: Color::White,
-            bg: Color::Black,
+            symbol: "",
+            fg: Color::Reset,
+            bg: Color::Reset,
         }
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct Buffer {
+pub struct Buffer<'a> {
     area: Rect,
-    content: Vec<Cell>,
+    content: Vec<Cell<'a>>,
 }
 
-impl Default for Buffer {
-    fn default() -> Buffer {
+impl<'a> Default for Buffer<'a> {
+    fn default() -> Buffer<'a> {
         Buffer {
             area: Default::default(),
             content: Vec::new(),
@@ -33,13 +38,13 @@ impl Default for Buffer {
     }
 }
 
-impl Buffer {
-    pub fn empty(area: Rect) -> Buffer {
+impl<'a> Buffer<'a> {
+    pub fn empty(area: Rect) -> Buffer<'a> {
         let cell: Cell = Default::default();
         Buffer::filled(area, cell)
     }
 
-    pub fn filled(area: Rect, cell: Cell) -> Buffer {
+    pub fn filled(area: Rect, cell: Cell<'a>) -> Buffer<'a> {
         let size = area.area() as usize;
         let mut content = Vec::with_capacity(size);
         for _ in 0..size {
@@ -51,7 +56,7 @@ impl Buffer {
         }
     }
 
-    pub fn content(&self) -> &[Cell] {
+    pub fn content(&'a self) -> &'a [Cell<'a>] {
         &self.content
     }
 
@@ -59,24 +64,29 @@ impl Buffer {
         &self.area
     }
 
-    pub fn index_of(&self, x: u16, y: u16) -> usize {
+    pub fn index_of(&self, x: u16, y: u16) -> Option<usize> {
         let index = (y * self.area.width + x) as usize;
-        debug_assert!(index < self.content.len());
-        index
+        if index < self.content.len() {
+            Some(index)
+        } else {
+            None
+        }
     }
 
-    pub fn pos_of(&self, i: usize) -> (u16, u16) {
-        debug_assert!(self.area.width != 0);
-        (i as u16 % self.area.width, i as u16 / self.area.width)
+    pub fn pos_of(&self, i: usize) -> Option<(u16, u16)> {
+        if self.area.width > 0 {
+            Some((i as u16 % self.area.width, i as u16 / self.area.width))
+        } else {
+            None
+        }
     }
 
     pub fn next_pos(&self, x: u16, y: u16) -> Option<(u16, u16)> {
-        let mut nx = x + 1;
-        let mut ny = y;
-        if nx >= self.area.width {
-            nx = 0;
-            ny = y + 1;
-        }
+        let (nx, ny) = if x + 1 > self.area.width {
+            (0, y + 1)
+        } else {
+            (x + 1, y)
+        };
         if ny >= self.area.height {
             None
         } else {
@@ -84,49 +94,72 @@ impl Buffer {
         }
     }
 
-    pub fn set(&mut self, x: u16, y: u16, cell: Cell) {
-        let i = self.index_of(x, y);
-        self.content[i] = cell;
-    }
-
-    pub fn set_symbol(&mut self, x: u16, y: u16, symbol: char) {
-        let i = self.index_of(x, y);
-        self.content[i].symbol = symbol;
-    }
-
-    pub fn set_fg(&mut self, x: u16, y: u16, color: Color) {
-        let i = self.index_of(x, y);
-        self.content[i].fg = color;
-    }
-    pub fn set_bg(&mut self, x: u16, y: u16, color: Color) {
-        let i = self.index_of(x, y);
-        self.content[i].bg = color;
-    }
-
-    pub fn set_string(&mut self, x: u16, y: u16, string: &str, fg: Color, bg: Color) {
-        let mut cursor = (x, y);
-        for c in string.chars() {
-            let index = self.index_of(cursor.0, cursor.1);
-            self.content[index].symbol = c;
-            self.content[index].fg = fg;
-            self.content[index].bg = bg;
-            match self.next_pos(cursor.0, cursor.1) {
-                Some(c) => {
-                    cursor = c;
-                }
-                None => {
-                    warn!("Failed to set all string");
-                }
-            }
+    pub fn set(&mut self, x: u16, y: u16, cell: Cell<'a>) {
+        if let Some(i) = self.index_of(x, y) {
+            self.content[i] = cell;
         }
     }
 
-    pub fn get(&self, x: u16, y: u16) -> &Cell {
-        let i = self.index_of(x, y);
-        &self.content[i]
+    pub fn set_symbol(&mut self, x: u16, y: u16, symbol: &'a str) {
+        if let Some(i) = self.index_of(x, y) {
+            self.content[i].symbol = symbol;
+        }
     }
 
-    pub fn merge(&mut self, other: &Buffer) {
+    pub fn set_fg(&mut self, x: u16, y: u16, color: Color) {
+        if let Some(i) = self.index_of(x, y) {
+            self.content[i].fg = color;
+        }
+    }
+    pub fn set_bg(&mut self, x: u16, y: u16, color: Color) {
+        if let Some(i) = self.index_of(x, y) {
+            self.content[i].bg = color;
+        }
+    }
+
+    pub fn set_string(&mut self, x: u16, y: u16, string: &'a str, fg: Color, bg: Color) {
+        self.set_characters(x, y, string, usize::MAX, fg, bg);
+    }
+
+    pub fn set_characters(&mut self,
+                          x: u16,
+                          y: u16,
+                          string: &'a str,
+                          limit: usize,
+                          fg: Color,
+                          bg: Color) {
+        let index = self.index_of(x, y);
+        if index.is_none() {
+            return;
+        }
+        let mut index = index.unwrap();
+        let graphemes = UnicodeSegmentation::graphemes(string, true).collect::<Vec<&str>>();
+        let max_index = min((self.area.width - x) as usize, limit);
+        for s in graphemes.iter().take(max_index) {
+            self.content[index].symbol = s;
+            self.content[index].fg = fg;
+            self.content[index].bg = bg;
+            index += 1;
+        }
+    }
+
+
+    pub fn update_colors(&mut self, x: u16, y: u16, fg: Color, bg: Color) {
+        if let Some(i) = self.index_of(x, y) {
+            self.content[i].fg = fg;
+            self.content[i].bg = bg;
+        }
+    }
+
+    pub fn update_cell(&mut self, x: u16, y: u16, symbol: &'a str, fg: Color, bg: Color) {
+        if let Some(i) = self.index_of(x, y) {
+            self.content[i].symbol = symbol;
+            self.content[i].fg = fg;
+            self.content[i].bg = bg;
+        }
+    }
+
+    pub fn merge(&'a mut self, other: Buffer<'a>) {
         let area = self.area.union(&other.area);
         let cell: Cell = Default::default();
         self.content.resize(area.area() as usize, cell.clone());
@@ -136,7 +169,7 @@ impl Buffer {
         let offset_y = self.area.y - area.y;
         let size = self.area.area() as usize;
         for i in (0..size).rev() {
-            let (x, y) = self.pos_of(i);
+            let (x, y) = self.pos_of(i).unwrap();
             // New index in content
             let k = ((y + offset_y) * area.width + (x + offset_x)) as usize;
             self.content[k] = self.content[i].clone();
@@ -151,7 +184,7 @@ impl Buffer {
         let offset_y = other.area.y - area.y;
         let size = other.area.area() as usize;
         for i in 0..size {
-            let (x, y) = other.pos_of(i);
+            let (x, y) = other.pos_of(i).unwrap();
             // New index in content
             let k = ((y + offset_y) * area.width + (x + offset_x)) as usize;
             self.content[k] = other.content[i].clone();

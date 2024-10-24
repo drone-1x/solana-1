@@ -2,11 +2,10 @@ use std::cmp::min;
 
 use layout::Rect;
 use buffer::Buffer;
-use widgets::{Widget, WidgetType, Block};
+use widgets::{Widget, Block};
 use style::Color;
 use symbols::bar;
 
-#[derive(Hash)]
 pub struct Sparkline<'a> {
     block: Option<Block<'a>>,
     fg: Color,
@@ -15,17 +14,19 @@ pub struct Sparkline<'a> {
     max: Option<u64>,
 }
 
-impl<'a> Sparkline<'a> {
-    pub fn new() -> Sparkline<'a> {
+impl<'a> Default for Sparkline<'a> {
+    fn default() -> Sparkline<'a> {
         Sparkline {
             block: None,
-            fg: Color::White,
-            bg: Color::Black,
+            fg: Color::Reset,
+            bg: Color::Reset,
             data: Vec::new(),
             max: None,
         }
     }
+}
 
+impl<'a> Sparkline<'a> {
     pub fn block(&mut self, block: Block<'a>) -> &mut Sparkline<'a> {
         self.block = Some(block);
         self
@@ -53,8 +54,8 @@ impl<'a> Sparkline<'a> {
     }
 }
 
-impl<'a> Widget for Sparkline<'a> {
-    fn buffer(&self, area: &Rect) -> Buffer {
+impl<'a> Widget<'a> for Sparkline<'a> {
+    fn buffer(&'a self, area: &Rect) -> Buffer<'a> {
         let (mut buf, spark_area) = match self.block {
             Some(ref b) => (b.buffer(area), b.inner(*area)),
             None => (Buffer::empty(*area), *area),
@@ -71,35 +72,32 @@ impl<'a> Widget for Sparkline<'a> {
             let max_index = min(spark_area.width as usize, self.data.len());
             let mut data = self.data
                 .iter()
+                .take(max_index)
                 .map(|e| e * spark_area.height as u64 * 8 / max)
                 .collect::<Vec<u64>>();
             for j in (0..spark_area.height).rev() {
-                let mut line = String::with_capacity(max_index);
-                for i in 0..max_index {
-                    line.push(match data[i] {
-                        0 => ' ',
+                for (i, d) in data.iter_mut().enumerate() {
+                    let symbol = match *d {
+                        0 => " ",
                         1 => bar::ONE_EIGHTH,
                         2 => bar::ONE_QUATER,
                         3 => bar::THREE_EIGHTHS,
                         4 => bar::HALF,
                         5 => bar::FIVE_EIGHTHS,
-                        6 => bar::THREE_EIGHTHS,
-                        7 => bar::THREE_QUATERS,
+                        6 => bar::THREE_QUATERS,
+                        7 => bar::SEVEN_EIGHTHS,
                         _ => bar::FULL,
-                    });
-                    if data[i] > 8 {
-                        data[i] -= 8;
+                    };
+                    buf.update_cell(margin_x + i as u16, margin_y + j, symbol, self.fg, self.bg);
+
+                    if *d > 8 {
+                        *d -= 8;
                     } else {
-                        data[i] = 0;
+                        *d = 0;
                     }
                 }
-                buf.set_string(margin_x, margin_y + j, &line, self.fg, self.bg);
             }
         }
         buf
-    }
-
-    fn widget_type(&self) -> WidgetType {
-        WidgetType::Sparkline
     }
 }

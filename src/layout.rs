@@ -5,8 +5,8 @@ use cassowary::{Solver, Variable, Constraint};
 use cassowary::WeightedRelation::*;
 use cassowary::strength::{WEAK, REQUIRED};
 
-use buffer::Buffer;
-use widgets::WidgetType;
+use terminal::Terminal;
+use util::hash;
 
 #[derive(Hash)]
 pub enum Alignment {
@@ -23,7 +23,7 @@ pub enum Direction {
     Vertical,
 }
 
-#[derive(Hash, Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct Rect {
     pub x: u16,
     pub y: u16,
@@ -150,17 +150,17 @@ pub fn split(area: &Rect,
     if let Some(last) = elements.last() {
         constraints.push(match *dir {
             Direction::Horizontal => {
-                last.x + last.width | EQ(WEAK) | (dest_area.x + dest_area.width) as f64
+                (last.x + last.width) | EQ(WEAK) | (dest_area.x + dest_area.width) as f64
             }
             Direction::Vertical => {
-                last.y + last.height | EQ(WEAK) | (dest_area.y + dest_area.height) as f64
+                (last.y + last.height) | EQ(WEAK) | (dest_area.y + dest_area.height) as f64
             }
         })
     }
     match *dir {
         Direction::Horizontal => {
             for pair in elements.windows(2) {
-                constraints.push(pair[0].x + pair[0].width | EQ(REQUIRED) | pair[1].x);
+                constraints.push((pair[0].x + pair[0].width) | EQ(REQUIRED) | pair[1].x);
             }
             for (i, size) in sizes.iter().enumerate() {
                 let cs = [elements[i].y | EQ(REQUIRED) | dest_area.y as f64,
@@ -175,7 +175,7 @@ pub fn split(area: &Rect,
         }
         Direction::Vertical => {
             for pair in elements.windows(2) {
-                constraints.push(pair[0].y + pair[0].height | EQ(REQUIRED) | pair[1].y);
+                constraints.push((pair[0].y + pair[0].height) | EQ(REQUIRED) | pair[1].y);
             }
             for (i, size) in sizes.iter().enumerate() {
                 let cs = [elements[i].x | EQ(REQUIRED) | dest_area.x as f64,
@@ -238,67 +238,7 @@ impl Element {
     }
 }
 
-pub enum Tree {
-    Node(Node),
-    Leaf(Leaf),
-}
-
-impl IntoIterator for Tree {
-    type Item = Leaf;
-    type IntoIter = WidgetIterator;
-
-    fn into_iter(self) -> WidgetIterator {
-        WidgetIterator::new(self)
-    }
-}
-
-pub struct WidgetIterator {
-    stack: Vec<Tree>,
-}
-
-impl WidgetIterator {
-    fn new(tree: Tree) -> WidgetIterator {
-        WidgetIterator { stack: vec![tree] }
-    }
-}
-
-impl Iterator for WidgetIterator {
-    type Item = Leaf;
-    fn next(&mut self) -> Option<Leaf> {
-        match self.stack.pop() {
-            Some(t) => {
-                match t {
-                    Tree::Node(n) => {
-                        let index = self.stack.len();
-                        for c in n.children {
-                            self.stack.insert(index, c);
-                        }
-                        self.next()
-                    }
-                    Tree::Leaf(l) => Some(l),
-                }
-            }
-            None => None,
-        }
-    }
-}
-
-pub struct Node {
-    pub children: Vec<Tree>,
-}
-
-impl Node {
-    pub fn add(&mut self, node: Tree) {
-        self.children.push(node);
-    }
-}
-
-pub struct Leaf {
-    pub widget_type: WidgetType,
-    pub hash: u64,
-    pub buffer: Buffer,
-}
-
+#[derive(Hash)]
 pub struct Group {
     direction: Direction,
     alignment: Alignment,
@@ -337,16 +277,26 @@ impl Group {
         self.chunks = Vec::from(chunks);
         self
     }
-    pub fn render<F>(&self, area: &Rect, f: F) -> Tree
-        where F: Fn(&[Rect], &mut Node)
+    pub fn render<F>(&self, t: &mut Terminal, area: &Rect, mut f: F)
+        where F: FnMut(&mut Terminal, &[Rect])
     {
-        let chunks = split(area,
-                           &self.direction,
-                           &self.alignment,
-                           self.margin,
-                           &self.chunks);
-        let mut node = Node { children: Vec::new() };
-        f(&chunks, &mut node);
-        Tree::Node(node)
+        let hash = hash(self, area);
+        let (cache_update, chunks) = match t.get_layout(hash) {
+            Some(chs) => (false, chs.to_vec()),
+            None => {
+                (true,
+                 split(area,
+                       &self.direction,
+                       &self.alignment,
+                       self.margin,
+                       &self.chunks))
+            }
+        };
+
+        f(t, &chunks);
+
+        if cache_update {
+            t.set_layout(hash, chunks);
+        }
     }
 }
